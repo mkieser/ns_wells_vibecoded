@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Water Well Viewer</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css">
+  <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/pmtiles@4/dist/pmtiles.js"></script>
+  <style>
+    html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
+    #map { position: absolute; inset: 0; }
+    .legend {
+      position: absolute; bottom: 30px; left: 10px; z-index: 1;
+      background: #fff; padding: 8px 10px; border-radius: 6px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.3); font-size: 13px;
+    }
+    .legend div { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+    .legend span { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #fff; box-shadow: 0 0 0 1px #888; }
+    .popup h3 { margin: 0 0 6px; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+    .popup .badge { font-size: 11px; font-weight: 600; color: #fff; padding: 1px 6px; border-radius: 3px; }
+    .popup table { border-collapse: collapse; font-size: 12px; }
+    .popup td { padding: 2px 8px 2px 0; vertical-align: top; }
+    .popup td:first-child { color: #666; white-space: nowrap; }
+    .popup .status { font-size: 12px; color: #666; }
+    .filter {
+      position: absolute; top: 10px; left: 10px; z-index: 1; width: 220px;
+      background: #fff; padding: 8px 10px; border-radius: 6px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.3); font-size: 13px;
+    }
+    .filter[hidden] { display: none; }
+    .filter .head { display: flex; justify-content: space-between; align-items: baseline; }
+    .filter .years { font-variant-numeric: tabular-nums; }
+    .filter button { border: 0; background: none; padding: 0; color: #1f78b4; cursor: pointer; font: inherit; font-size: 12px; }
+    .filter button:disabled { color: #aaa; cursor: default; }
+    /* Two range inputs stacked on one track; only their thumbs take the pointer */
+    .range { position: relative; height: 24px; margin-top: 4px; }
+    .range::before {
+      content: ''; position: absolute; left: 0; right: 0; top: 10px; height: 4px;
+      border-radius: 2px; background: #ddd;
+    }
+    .range input {
+      position: absolute; inset: 0; width: 100%; margin: 0; background: none;
+      pointer-events: none; -webkit-appearance: none; appearance: none;
+    }
+    .range input::-webkit-slider-thumb {
+      -webkit-appearance: none; pointer-events: auto; width: 16px; height: 16px;
+      border-radius: 50%; background: #1f78b4; border: 2px solid #fff; box-shadow: 0 0 0 1px #888; cursor: pointer;
+    }
+    .range input::-moz-range-thumb {
+      pointer-events: auto; width: 12px; height: 12px;
+      border-radius: 50%; background: #1f78b4; border: 2px solid #fff; box-shadow: 0 0 0 1px #888; cursor: pointer;
+    }
+    /* Year labels under the track; inset by half a thumb so they line up with thumb centres */
+    .ticks { position: relative; height: 14px; margin: 0 8px; font-size: 10px; color: #888; }
+    .ticks span { position: absolute; transform: translateX(-50%); }
+    .ticks span::before {
+      content: ''; position: absolute; left: 50%; top: -5px; width: 1px; height: 4px; background: #bbb;
+    }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<div class="filter" id="filter" hidden>
+  <div class="head">
+    <strong>Year completed</strong>
+    <button id="yearReset" disabled>Show all</button>
+  </div>
+  <div class="years"><span id="yearFrom"></span> – <span id="yearTo"></span></div>
+  <div class="range">
+    <input type="range" id="fromInput" aria-label="From year">
+    <input type="range" id="toInput" aria-label="To year">
+  </div>
+  <div class="ticks" id="yearTicks"></div>
+</div>
+<div class="legend" id="legend"><strong>Well type</strong></div>
+
+<script type="module">
+  import { asyncBufferFromUrl, parquetMetadataAsync, parquetReadObjects }
+    from 'https://cdn.jsdelivr.net/npm/hyparquet@1/+esm';
+
+  // ---- CONFIG -----------------------------------------------------------
+  const PMTILES_URL  = new URL('wells.pmtiles', location.href).href;       // or a full https:// URL
+  const DETAILS_URL  = new URL('well_details.parquet', location.href).href;
+  const SOURCE_LAYER = 'wells';            // the -l name given to tippecanoe
+  const ID_FIELD     = 'well_id';
+  const TYPE_FIELD   = 'well_type';
+  const YEAR_FIELD   = 'date_well_completed'; // integer year in the tiles
+  const TYPE_COLORS = {
+    'DRILLED': '#1f78b4',
+    'DUG':     '#e66101'
+  };
+  const OTHER_COLOR = '#888888';
+  // Labels for the popup, in display order. Columns not listed are hidden.
+  const DETAIL_LABELS = {
+    date_well_completed:  'Year completed',
+    civic_address:        'Civic address',
+    lot_number:           'Lot',
+    subdivision:          'Subdivision',
+    property_pid:         'PID',
+    county:               'County',
+    postal_code:          'Postal code',
+    depth_to_bedrock:     'Depth to bedrock',
+    total_finished_depth: 'Total finished depth',
+    easting:              'Easting (UTM 20N, m)',
+    northing:             'Northing (UTM 20N, m)',
+    coordinate_accuracy:  'Coordinate accuracy'
+  };
+  // -----------------------------------------------------------------------
+
+  const protocol = new pmtiles.Protocol();
+  maplibregl.addProtocol('pmtiles', protocol.tile);
+  // Register the archive ourselves so we can also read its metadata (year range)
+  const archive = new pmtiles.PMTiles(PMTILES_URL);
+  protocol.add(archive);
+
+  const map = new maplibregl.Map({
+    container: 'map',
+    style: 'https://tiles.openfreemap.org/styles/positron', // free basemap, no API key
+    center: [-63.0, 45.1],   // Nova Scotia
+    zoom: 6.3
+  });
+  map.addControl(new maplibregl.NavigationControl(), 'top-right');
+  map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }));
+
+  // Color expression + legend from TYPE_COLORS
+  const colorExpr = ['match', ['get', TYPE_FIELD]];
+  const legend = document.getElementById('legend');
+  for (const [type, color] of Object.entries(TYPE_COLORS)) {
+    colorExpr.push(type, color);
+    legend.insertAdjacentHTML('beforeend', `<div><span style="background:${color}"></span>${type}</div>`);
+  }
+  colorExpr.push(OTHER_COLOR);
+  legend.insertAdjacentHTML('beforeend', `<div><span style="background:${OTHER_COLOR}"></span>Other</div>`);
+
+  map.on('load', () => {
+    map.addSource('wells', { type: 'vector', url: `pmtiles://${PMTILES_URL}` });
+    map.addLayer({
+      id: 'wells',
+      type: 'circle',
+      source: 'wells',
+      'source-layer': SOURCE_LAYER,
+      paint: {
+        'circle-color': colorExpr,
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 1.5, 10, 3.5, 15, 7],
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 5, 0, 10, 0.5, 15, 1],
+        'circle-opacity': 0.85
+      }
+    });
+
+    initYearFilter();
+
+    map.on('mouseenter', 'wells', () => map.getCanvas().style.cursor = 'pointer');
+    map.on('mouseleave', 'wells', () => map.getCanvas().style.cursor = '');
+
+    map.on('click', 'wells', async (e) => {
+      const f = e.features[0];
+      const id = f.properties[ID_FIELD];
+      const type = f.properties[TYPE_FIELD];
+      const color = TYPE_COLORS[type] || OTHER_COLOR;
+
+      const popup = new maplibregl.Popup({ maxWidth: '340px' })
+        .setLngLat(f.geometry.coordinates)
+        .setHTML(`<div class="popup">
+            <h3>Well ${esc(id)} <span class="badge" style="background:${color}">${esc(type || 'UNKNOWN')}</span></h3>
+            <div class="body"><span class="status">Loading details…</span></div>
+          </div>`)
+        .addTo(map);
+      const body = popup.getElement().querySelector('.body');
+
+      try {
+        const row = await lookupWell(id);
+        body.innerHTML = row ? renderDetails(row)
+                             : '<span class="status">No details found for this well.</span>';
+      } catch (err) {
+        console.error(err);
+        body.innerHTML = '<span class="status">Could not load details.</span>';
+      }
+    });
+  });
+
+  // ---- Year filter ------------------------------------------------------
+  // The slider's range comes from the tile metadata (tippecanoe's tilestats),
+  // so it follows the data when the tiles are rebuilt.
+  async function initYearFilter() {
+    let min, max;
+    try {
+      const md = await archive.getMetadata();
+      const layer = md.tilestats?.layers?.find(l => l.layer === SOURCE_LAYER);
+      const attr = layer?.attributes?.find(a => a.attribute === YEAR_FIELD);
+      ({ min, max } = attr ?? {});
+    } catch (err) {
+      console.error(err);
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return; // no year data: keep the filter hidden
+
+    // Non-linear scale: the inputs hold a position 0..STEPS, mapped to a year with
+    // year = max - span * (1 - p)^CURVE. Most wells are recent, so this stretches
+    // the recent end (CURVE 2: the right half of the track covers the last quarter
+    // of the years) and squeezes the sparse early decades.
+    const STEPS = 1000, CURVE = 2, span = max - min;
+    const posToYear = pos => Math.round(max - span * (1 - pos / STEPS) ** CURVE);
+    const yearToPos = year => Math.round(STEPS * (1 - ((max - year) / span) ** (1 / CURVE)));
+
+    const fromInput = document.getElementById('fromInput');
+    const toInput   = document.getElementById('toInput');
+    const reset     = document.getElementById('yearReset');
+    for (const input of [fromInput, toInput]) Object.assign(input, { min: 0, max: STEPS, step: 1 });
+    fromInput.value = 0;
+    toInput.value = STEPS;
+
+    // Tick labels at the ends and at decades, working back from the recent end
+    // (where the track is most stretched) and skipping any that would crowd a neighbour
+    const ticks = document.getElementById('yearTicks');
+    const pct = year => 100 * yearToPos(year) / STEPS;
+    const MIN_GAP = 13; // % of track width between labels
+    const years = [max];
+    for (let y = Math.floor((max - 1) / 10) * 10; y > min; y -= 10) {
+      if (pct(years.at(-1)) - pct(y) >= MIN_GAP && pct(y) >= MIN_GAP) years.push(y);
+    }
+    years.push(min);
+    for (const y of years) ticks.insertAdjacentHTML('afterbegin', `<span style="left:${pct(y)}%">${y}</span>`);
+
+    function apply(moved) {
+      let from = posToYear(+fromInput.value), to = posToYear(+toInput.value);
+      // Don't let the handles cross: the one being dragged stops at the other
+      if (from > to) {
+        if (moved === fromInput) { fromInput.value = toInput.value; from = to; }
+        else { toInput.value = fromInput.value; to = from; }
+      }
+      document.getElementById('yearFrom').textContent = from;
+      document.getElementById('yearTo').textContent = to;
+      fromInput.setAttribute('aria-valuetext', from);
+      toInput.setAttribute('aria-valuetext', to);
+      // When both handles sit at the top end, lift "from" so it can still be dragged
+      fromInput.style.zIndex = from === max ? 2 : '';
+      const all = from === min && to === max;
+      reset.disabled = all;
+      // Full range: no filter, so wells without a year still show
+      const year = ['coalesce', ['get', YEAR_FIELD], -1];
+      map.setFilter('wells', all ? null : ['all', ['>=', year, from], ['<=', year, to]]);
+    }
+
+    // Keyboard steps in whole years (a raw step would be a fraction of a year
+    // at the recent end): arrows ±1 year, Page Up/Down ±10, Home/End to the ends.
+    const KEY_YEARS = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1, PageDown: -10, PageUp: 10 };
+    for (const input of [fromInput, toInput]) {
+      input.addEventListener('input', () => apply(input));
+      input.addEventListener('keydown', e => {
+        let year;
+        if (e.key in KEY_YEARS) year = posToYear(+input.value) + KEY_YEARS[e.key];
+        else if (e.key === 'Home') year = min;
+        else if (e.key === 'End') year = max;
+        else return;
+        e.preventDefault();
+        input.value = yearToPos(Math.min(max, Math.max(min, year)));
+        apply(input);
+      });
+    }
+    reset.addEventListener('click', () => {
+      fromInput.value = 0;
+      toInput.value = STEPS;
+      apply();
+    });
+    apply();
+    document.getElementById('filter').hidden = false;
+  }
+
+  // ---- Parquet lookup ---------------------------------------------------
+  // The file is sorted by well_id, so each row group covers a known id range.
+  // We read only the footer once, then only the one row group holding the id.
+  let detailsPromise;
+  function openDetails() {
+    detailsPromise ??= (async () => {
+      const file = await asyncBufferFromUrl({ url: DETAILS_URL });
+      const metadata = await parquetMetadataAsync(file);
+      const groups = [];
+      let start = 0;
+      for (const rg of metadata.row_groups) {
+        const n = Number(rg.num_rows);
+        const col = rg.columns.find(c => c.meta_data?.path_in_schema?.[0] === ID_FIELD);
+        const s = col?.meta_data?.statistics;
+        groups.push({ start, end: start + n, min: s?.min_value ?? s?.min, max: s?.max_value ?? s?.max });
+        start += n;
+      }
+      return { file, metadata, groups };
+    })();
+    return detailsPromise;
+  }
+
+  // Compare ids the same way the file was sorted: numerically if numeric, else as text
+  function cmp(a, b) {
+    const numeric = typeof a === 'bigint' || typeof a === 'number';
+    if (numeric) { const x = Number(a), y = Number(b); return x < y ? -1 : x > y ? 1 : 0; }
+    const x = String(a), y = String(b); return x < y ? -1 : x > y ? 1 : 0;
+  }
+
+  async function lookupWell(id) {
+    const { file, metadata, groups } = await openDetails();
+    const haveStats = groups.every(g => g.min != null && g.max != null);
+    // With stats: only groups whose [min, max] contains the id. Without: scan all.
+    const candidates = haveStats
+      ? groups.filter(g => cmp(g.min, id) <= 0 && cmp(g.max, id) >= 0)
+      : groups;
+    for (const g of candidates) {
+      const rows = await parquetReadObjects({ file, metadata, rowStart: g.start, rowEnd: g.end });
+      const hit = rows.find(r => String(r[ID_FIELD]) === String(id));
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  // ---- Rendering --------------------------------------------------------
+  function renderDetails(row) {
+    const rows = Object.entries(DETAIL_LABELS)
+      .filter(([k]) => row[k] !== null && row[k] !== undefined && row[k] !== '')
+      .map(([k, label]) => `<tr><td>${esc(label)}</td><td>${esc(fmt(row[k], k))}</td></tr>`)
+      .join('');
+    return rows ? `<table>${rows}</table>` : '<span class="status">No details recorded.</span>';
+  }
+
+  function fmt(v, key) {
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    if (key === 'easting' || key === 'northing') return Number(v).toFixed(0); // plain metres, no separators
+    if (typeof v === 'number' && !Number.isInteger(v)) return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    return v;
+  }
+
+  function esc(v) {
+    return String(v ?? '').replace(/[&<>"']/g, c =>
+      ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+  }
+</script>
+</body>
+</html>

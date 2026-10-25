@@ -1,0 +1,18 @@
+# Source data, downloaded by build_data.py (the .mde is over GitHub's 100 MB limit)
+NS_Well_Logs_2020.zip
+*.mde
+
+# JDBC driver jars, downloaded by build_data.py
+jdbc/
+
+# Outputs of build_data.py (run it to recreate them)
+wells.gpkg
+wells.pmtiles
+well_details.parquet
+
+# Leftovers from an interrupted build
+*.part
+wells.fgb
+
+# macOS
+.DS_Store
