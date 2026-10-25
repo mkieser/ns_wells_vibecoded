@@ -19,15 +19,18 @@ decisions made along the way.
 
 ## Quick start
 
-```bash
-# 1. Build the data (downloads the province's database on first run)
-python build_data.py
+The map's data files are committed, so the app runs straight after cloning:
 
-# 2. Serve the folder with a server that supports HTTP Range requests
+```bash
+# 1. Serve the folder with a server that supports HTTP Range requests
 npx http-server          # needs Node 18+; with nvm: `nvm use 23` first
 
-# 3. Open the printed URL, e.g. http://127.0.0.1:8080
+# 2. Open the printed URL, e.g. http://127.0.0.1:8080
 ```
+
+To rebuild the data from the province's database, for example after it's updated, run
+`python build_data.py --refresh`. See [The data pipeline](#the-data-pipeline-build_datapy) for
+its requirements.
 
 The page **must be served over HTTP**. Opening `index.html` as a file (`file://`) won't work.
 The server must also support **Range requests**, which `python -m http.server` doesn't.
@@ -41,16 +44,15 @@ The server must also support **Range requests**, which `python -m http.server` d
 |---|---|
 | `index.html` | The map app: MapLibre GL, PMTiles and hyparquet, all loaded from CDNs. |
 | `build_data.py` | The data pipeline: Access database → GeoPackage → Parquet and PMTiles. |
-| `wells.pmtiles` | *Generated.* Map tiles, zoom 0–13, layer `wells`. |
-| `well_details.parquet` | *Generated.* All attributes, sorted by `well_id`. |
-| `wells.gpkg` | *Generated.* One point per well, NAD83 / UTM zone 20N (EPSG:26920). |
+| `wells.pmtiles` | *Generated, committed.* Map tiles, zoom 0–13, layer `wells`. |
+| `well_details.parquet` | *Generated, committed.* All attributes, sorted by `well_id`. |
+| `wells.gpkg` | *Generated, not committed.* One point per well, NAD83 / UTM zone 20N (EPSG:26920). |
 | `NS_Well_Logs_2020.zip`, `NS Well Logs (2020) - Public Version.mde` | *Downloaded* by `build_data.py`. |
 | `jdbc/` | *Downloaded* by `build_data.py`: the UCanAccess JDBC driver jars. |
 
-> Only the code and this README are committed. `.gitignore` excludes the
-> *Generated* and *Downloaded* files: `build_data.py` recreates them, and the `.mde` (about 140 MB)
-> is over GitHub's 100 MB file limit anyway. After cloning, run `python build_data.py` before
-> serving the app.
+> The code, this README and the app's two data files are committed. `.gitignore` excludes
+> `wells.gpkg` and the *Downloaded* files: `build_data.py` recreates them, and the `.mde` (about
+> 140 MB) is over GitHub's 100 MB file limit anyway.
 
 ---
 

@@ -5,10 +5,10 @@ NS_Well_Logs_2020.zip
 # JDBC driver jars, downloaded by build_data.py
 jdbc/
 
-# Outputs of build_data.py (run it to recreate them)
+# Intermediate output of build_data.py (run it to recreate it). The app's
+# data files, wells.pmtiles and well_details.parquet, are committed so the
+# map works straight after cloning.
 wells.gpkg
-wells.pmtiles
-well_details.parquet
 
 # Leftovers from an interrupted build
 *.part
