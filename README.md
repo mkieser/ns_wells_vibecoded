@@ -50,9 +50,9 @@ The server must also support **Range requests**, which `python -m http.server` d
 | `well_details.parquet` | *Generated, committed.* All attributes, sorted by `well_id`. |
 | `wells.gpkg` | *Generated, not committed.* One point per well, NAD83 / UTM zone 20N (EPSG:26920). |
 | `NS_Well_Logs_2020.zip`, `NS Well Logs (2020) - Public Version.mde` | *Downloaded* by `build_data.py`. |
-| `jdbc/` | *Downloaded* by `build_data.py`: the UCanAccess JDBC driver jars. |
+| `jdbc/` | *Committed.* The UCanAccess JDBC driver jars: UCanAccess and Jackcess (Apache 2.0), HSQLDB (BSD). `build_data.py` downloads any that are missing. |
 
-> The code, this README and the app's two data files are committed. `.gitignore` excludes
+> The code, this README, the app's two data files and the JDBC jars are committed. `.gitignore` excludes
 > `wells.gpkg` and the *Downloaded* files: `build_data.py` recreates them, and the `.mde` (about
 > 140 MB) is over GitHub's 100 MB file limit anyway.
 
@@ -91,7 +91,8 @@ Done: wells.gpkg + wells.pmtiles + well_details.parquet
 
 **0. Fetch the source data.** The script downloads
 `https://novascotia.ca/nse/groundwater/docs/NS_Well_Logs_2020.zip` and extracts the Access database
-from it. It also downloads the UCanAccess, Jackcess and HSQLDB jars from Maven Central into `jdbc/`.
+from it. The UCanAccess, Jackcess and HSQLDB jars are committed in `jdbc/`; if any is missing, the
+script downloads it from Maven Central.
 Each download is saved under a temporary name and renamed only when complete, so an interrupted
 download is never mistaken for a finished file. Only the `.mde` is taken from the zip, and it is
 written by its bare file name.
