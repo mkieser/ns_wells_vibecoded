@@ -4,7 +4,7 @@ An interactive web map of about 125,000 water wells in Nova Scotia, built from t
 [well log database](https://novascotia.ca/nse/groundwater/). Wells are coloured by type (drilled or
 dug) and can be filtered by the year they were completed. Clicking a well shows its details.
 
-**Live app: [nswellsvibecoded.vercel.app](https://nswellsvibecoded.vercel.app/)** (hosted on Vercel)
+**Live app: [ns-wells.vercel.app](https://ns-wells.vercel.app/)** (hosted on Vercel)
 
 The app is a single static HTML page with no backend. It reads two data files straight from the
 web server:
